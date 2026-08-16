@@ -1,12 +1,17 @@
 import { Request, Response } from 'express';
 import { BoardModel } from '../models/boardModel';
 import { BoardStatus } from '../types';
+import { isBoardUUID } from '../lib/boardId';
 import logger from '../utils/logger';
+
+const invalidId = (res: Response) =>
+  res.status(400).json({ success: false, message: 'Invalid board ID format' });
 
 export const boardController = {
   async create(req: Request, res: Response) {
     try {
-      const board = await BoardModel.create();
+      const name = typeof req.body?.name === 'string' ? req.body.name : undefined;
+      const board = await BoardModel.create(name);
 
       return res.status(201).json({
         success: true,
@@ -24,10 +29,14 @@ export const boardController = {
   async listActive(req: Request, res: Response) {
     try {
       const boards = await BoardModel.findAllActive();
+      const scopedId = req.embedAuth?.board_id;
+      const scoped = scopedId
+        ? boards.filter(board => board.id.toLowerCase() === scopedId.toLowerCase())
+        : boards;
 
       return res.status(200).json({
         success: true,
-        data: boards,
+        data: scoped,
       });
     } catch (error) {
       logger.error('Error listing active boards:', error);
@@ -40,6 +49,12 @@ export const boardController = {
 
   async listTrash(req: Request, res: Response) {
     try {
+      if (req.embedAuth?.board_id) {
+        return res.status(200).json({
+          success: true,
+          data: [],
+        });
+      }
       const boards = await BoardModel.findAllDeleted();
 
       return res.status(200).json({
@@ -59,12 +74,11 @@ export const boardController = {
     try {
       const { id } = req.params;
       const { name } = req.body;
-      const boardId = parseInt(id, 10);
-      if (isNaN(boardId)) {
-        return res.status(400).json({ success: false, message: 'Invalid board ID format' });
+      if (!isBoardUUID(id)) {
+        return invalidId(res);
       }
 
-      const board = await BoardModel.findById(boardId);
+      const board = await BoardModel.findById(id);
 
       if (!board) {
         return res.status(404).json({
@@ -80,7 +94,7 @@ export const boardController = {
         });
       }
 
-      const updatedBoard = await BoardModel.update(boardId, { name });
+      const updatedBoard = await BoardModel.update(id, { name });
 
       return res.status(200).json({
         success: true,
@@ -98,11 +112,10 @@ export const boardController = {
   async moveToTrash(req: Request, res: Response) {
     try {
       const { id } = req.params;
-      const boardId = parseInt(id, 10);
-      if (isNaN(boardId)) {
-        return res.status(400).json({ success: false, message: 'Invalid board ID format' });
+      if (!isBoardUUID(id)) {
+        return invalidId(res);
       }
-      const board = await BoardModel.findById(boardId);
+      const board = await BoardModel.findById(id);
 
       if (!board) {
         return res.status(404).json({
@@ -118,7 +131,7 @@ export const boardController = {
         });
       }
 
-      await BoardModel.moveToTrash(boardId);
+      await BoardModel.moveToTrash(id);
 
       return res.status(200).json({
         success: true,
@@ -136,11 +149,10 @@ export const boardController = {
   async restoreFromTrash(req: Request, res: Response) {
     try {
       const { id } = req.params;
-      const boardId = parseInt(id, 10);
-      if (isNaN(boardId)) {
-        return res.status(400).json({ success: false, message: 'Invalid board ID format' });
+      if (!isBoardUUID(id)) {
+        return invalidId(res);
       }
-      const board = await BoardModel.findById(boardId);
+      const board = await BoardModel.findById(id);
 
       if (!board) {
         return res.status(404).json({
@@ -156,7 +168,7 @@ export const boardController = {
         });
       }
 
-      await BoardModel.restoreFromTrash(boardId);
+      await BoardModel.restoreFromTrash(id);
 
       return res.status(200).json({
         success: true,
@@ -174,19 +186,16 @@ export const boardController = {
   async permanentDelete(req: Request, res: Response) {
     try {
       const { id } = req.params;
-      const boardId = parseInt(id, 10);
-      if (isNaN(boardId)) {
-        return res.status(400).json({ success: false, message: 'Invalid board ID format' });
+      if (!isBoardUUID(id)) {
+        return invalidId(res);
       }
 
-      const board = await BoardModel.findById(boardId);
+      const board = await BoardModel.findById(id);
       if (!board) {
         return res.status(404).json({ success: false, message: 'Board not found' });
       }
 
-      await BoardModel.permanentlyDelete(boardId);
-
-      console.log('Deleting files');
+      await BoardModel.permanentlyDelete(id);
 
       return res.status(200).json({
         success: true,

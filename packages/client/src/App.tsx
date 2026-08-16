@@ -26,6 +26,14 @@ const App = () => {
       <Router>
         <Routes>
           <Route
+            path="/embed/:boardId"
+            element={
+              <BoardProvider embed>
+                <BoardPage />
+              </BoardProvider>
+            }
+          />
+          <Route
             path="/board/:boardId"
             element={
               <BoardProvider>

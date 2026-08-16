@@ -1,3 +1,5 @@
+import { authHeaders } from '../utils/embed';
+
 const API_BASE_URL = '/api';
 
 interface ApiResponse<T> {
@@ -8,15 +10,37 @@ interface ApiResponse<T> {
 
 type RequestBody = Record<string, unknown> | unknown[];
 
+const parseResponse = async <T>(response: Response): Promise<ApiResponse<T>> => {
+  const text = await response.text();
+  if (!text) {
+    if (!response.ok) {
+      throw new Error(`Request failed (${response.status})`);
+    }
+    return { success: true };
+  }
+  try {
+    return JSON.parse(text) as ApiResponse<T>;
+  } catch {
+    throw new Error(`Request failed (${response.status}): ${text.slice(0, 180)}`);
+  }
+};
+
+const assertOk = <T>(response: Response, data: ApiResponse<T>): void => {
+  if (!response.ok || data.success === false) {
+    throw new Error(data.message || `Request failed (${response.status})`);
+  }
+};
+
 export const api = {
   async get<T>(endpoint: string): Promise<T> {
-    const response = await fetch(`${API_BASE_URL}${endpoint}`);
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      headers: {
+        ...authHeaders(),
+      },
+    });
 
-    const data: ApiResponse<T> = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.message || 'Request failed');
-    }
+    const data = await parseResponse<T>(response);
+    assertOk(response, data);
 
     return (data.data ?? data) as T;
   },
@@ -26,14 +50,12 @@ export const api = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...authHeaders(),
       },
       body: JSON.stringify(body),
     });
-    const data: ApiResponse<T> = await response.json();
-
-    if (!data.success) {
-      throw new Error(data.message || 'Request failed');
-    }
+    const data = await parseResponse<T>(response);
+    assertOk(response, data);
 
     return data.data as T;
   },
@@ -43,14 +65,12 @@ export const api = {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
+        ...authHeaders(),
       },
       body: JSON.stringify(body),
     });
-    const data: ApiResponse<T> = await response.json();
-
-    if (!data.success) {
-      throw new Error(data.message || 'Request failed');
-    }
+    const data = await parseResponse<T>(response);
+    assertOk(response, data);
 
     return data.data as T;
   },
@@ -58,11 +78,11 @@ export const api = {
   async delete(endpoint: string): Promise<void> {
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       method: 'DELETE',
+      headers: {
+        ...authHeaders(),
+      },
     });
-    const data: ApiResponse<void> = await response.json();
-
-    if (!data.success) {
-      throw new Error(data.message || 'Request failed');
-    }
+    const data = await parseResponse<void>(response);
+    assertOk(response, data);
   },
 };

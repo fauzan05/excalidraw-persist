@@ -10,16 +10,18 @@ import React, {
 import { useNavigate, useParams } from 'react-router-dom';
 import { BoardService } from '../services/boardService';
 import { Board } from '../types/types';
+import { isEmbedPath, readEmbedToken } from '../utils/embed';
 import Utils from '../utils';
 import logger from '../utils/logger';
 
 interface BoardContextType {
   boards: Board[];
   isLoading: boolean;
+  embed: boolean;
   fetchBoards: () => Promise<void>;
-  handleRenameBoard: (id: number, newName: string) => void;
+  handleRenameBoard: (id: string, newName: string) => void;
   handleCreateBoard: () => Promise<void>;
-  handleDeleteBoard: (id: number) => Promise<void>;
+  handleDeleteBoard: (id: string) => Promise<void>;
   activeBoardId: string | undefined;
 }
 
@@ -35,16 +37,33 @@ export const useBoardContext = () => {
 
 interface BoardProviderProps {
   children: ReactNode;
+  embed?: boolean;
 }
 
-export const BoardProvider: React.FC<BoardProviderProps> = ({ children }) => {
+export const BoardProvider: React.FC<BoardProviderProps> = ({ children, embed = false }) => {
   const [boards, setBoards] = useState<Board[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
   const { boardId: activeBoardId } = useParams<{ boardId: string }>();
   const didAttemptInitialBoardCreation = useRef(false);
+  const isEmbed = embed || isEmbedPath();
 
   const fetchBoards = useCallback(async () => {
+    if (isEmbed) {
+      if (activeBoardId) {
+        setBoards([
+          {
+            id: activeBoardId,
+            name: 'Whiteboard',
+            status: 'ACTIVE',
+            created_at: Date.now(),
+            updated_at: Date.now(),
+          },
+        ]);
+      }
+      setIsLoading(false);
+      return;
+    }
     try {
       setIsLoading(true);
       const data = await BoardService.getAllBoards();
@@ -52,8 +71,9 @@ export const BoardProvider: React.FC<BoardProviderProps> = ({ children }) => {
       setIsLoading(false);
     } catch (error) {
       logger.error('Error fetching boards:', error, true);
+      setIsLoading(false);
     }
-  }, []);
+  }, [activeBoardId, isEmbed]);
 
   const debouncedUpdateBoardName = useCallback(
     Utils.debounce((id: string, newName: string) => {
@@ -65,16 +85,19 @@ export const BoardProvider: React.FC<BoardProviderProps> = ({ children }) => {
   );
 
   const handleRenameBoard = useCallback(
-    (id: number, newName: string) => {
+    (id: string, newName: string) => {
       setBoards(prevBoards =>
         prevBoards.map(board => (board.id === id ? { ...board, name: newName } : board))
       );
-      debouncedUpdateBoardName(id.toString(), newName);
+      debouncedUpdateBoardName(id, newName);
     },
     [debouncedUpdateBoardName]
   );
 
   const handleCreateBoard = useCallback(async () => {
+    if (isEmbed) {
+      return;
+    }
     setIsLoading(true);
     try {
       const newBoard = await BoardService.createBoard();
@@ -85,10 +108,13 @@ export const BoardProvider: React.FC<BoardProviderProps> = ({ children }) => {
     } finally {
       setIsLoading(false);
     }
-  }, [navigate]);
+  }, [isEmbed, navigate]);
 
   const handleDeleteBoard = useCallback(
-    async (id: number) => {
+    async (id: string) => {
+      if (isEmbed) {
+        return;
+      }
       const boardToDelete = boards.find(b => b.id === id);
       if (!boardToDelete) return;
 
@@ -97,18 +123,18 @@ export const BoardProvider: React.FC<BoardProviderProps> = ({ children }) => {
 
       let nextBoardId: string | undefined = undefined;
       const remainingBoards = previousBoards.filter(b => b.id !== id);
-      if (activeBoardId === id.toString()) {
+      if (activeBoardId === id) {
         if (remainingBoards.length > 0) {
           const deletedIndex = previousBoards.findIndex(b => b.id === id);
           const nextIndex = Math.max(0, deletedIndex - 1);
-          nextBoardId = remainingBoards[nextIndex]?.id.toString();
+          nextBoardId = remainingBoards[nextIndex]?.id;
         }
       }
 
       try {
-        await BoardService.moveToTrash(id.toString());
+        await BoardService.moveToTrash(id);
 
-        if (activeBoardId === id.toString()) {
+        if (activeBoardId === id) {
           if (nextBoardId) {
             navigate(`/board/${nextBoardId}`);
           } else {
@@ -122,14 +148,20 @@ export const BoardProvider: React.FC<BoardProviderProps> = ({ children }) => {
         setBoards(previousBoards);
       }
     },
-    [boards, navigate, activeBoardId, handleCreateBoard]
+    [boards, navigate, activeBoardId, handleCreateBoard, fetchBoards, isEmbed]
   );
 
   useEffect(() => {
+    if (isEmbed) {
+      readEmbedToken();
+    }
     fetchBoards();
-  }, [fetchBoards]);
+  }, [fetchBoards, isEmbed]);
 
   useEffect(() => {
+    if (isEmbed) {
+      return;
+    }
     if (!isLoading && boards.length === 0 && !didAttemptInitialBoardCreation.current) {
       didAttemptInitialBoardCreation.current = true;
       handleCreateBoard();
@@ -137,15 +169,16 @@ export const BoardProvider: React.FC<BoardProviderProps> = ({ children }) => {
     if (boards.length > 0 || isLoading) {
       didAttemptInitialBoardCreation.current = false;
     }
-    if (activeBoardId && boards.length > 0 && !boards.find(b => b.id === parseInt(activeBoardId))) {
+    if (activeBoardId && boards.length > 0 && !boards.find(b => b.id === activeBoardId)) {
       logger.warn('Invalid board id, navigating to last board', true);
       navigate(`/board/${boards[boards.length - 1].id}`);
     }
-  }, [boards, isLoading, handleCreateBoard, activeBoardId, navigate]);
+  }, [boards, isLoading, handleCreateBoard, activeBoardId, navigate, isEmbed]);
 
   const value = {
     boards,
     isLoading,
+    embed: isEmbed,
     fetchBoards,
     handleRenameBoard,
     handleCreateBoard,

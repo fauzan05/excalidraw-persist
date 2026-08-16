@@ -3,6 +3,8 @@ FROM node:22-alpine AS base
 # Install pnpm
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
+ENV npm_config_fetch_timeout=600000
+ENV npm_config_fetch_retries=8
 RUN corepack enable
 
 # Setup common build stage

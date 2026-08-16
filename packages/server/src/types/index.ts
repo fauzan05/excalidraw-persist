@@ -3,18 +3,22 @@ export enum BoardStatus {
   DELETED = 'DELETED',
 }
 
+export type ResourceType = 'meeting' | 'document';
+
 export interface Board {
-  id: number;
+  id: string;
   name: string;
   status: 'ACTIVE' | 'DELETED';
+  external_key: string | null;
+  resource_type: string | null;
   created_at: number;
   updated_at: number;
 }
 
 export interface Element {
   id: string;
-  board_id: number;
-  data: string; // JSON string
+  board_id: string;
+  data: string;
   element_index: string;
   type: string;
   created_at: number;
@@ -24,14 +28,14 @@ export interface Element {
 
 export interface StoredFile {
   id: string;
-  board_id: number;
+  board_id: string;
   data: string;
   created_at: number;
   updated_at: number;
 }
 
 export interface LibraryRecord {
-  board_id: number;
+  board_id: string;
   data: string;
   updated_at: number;
 }
@@ -53,7 +57,7 @@ export interface ExcalidrawElement {
   opacity: number;
   groupIds: string[];
   frameId?: string | null;
-  index?: string; // Index from Excalidraw element (a0, a1, etc.)
+  index?: string;
   seed: number;
   version: number;
   versionNonce: number;
@@ -62,10 +66,8 @@ export interface ExcalidrawElement {
   updated: number;
   link?: string | null;
   locked: boolean;
-  fileId?: string; // For image elements
+  fileId?: string;
   status?: string;
-
-  // Additional optional properties that may be present
   fontSize?: number;
   fontFamily?: string;
   text?: string;
@@ -75,8 +77,6 @@ export interface ExcalidrawElement {
   containerId?: string;
   points?: readonly [number, number][];
   customData?: Record<string, unknown>;
-
-  // For other unknown properties
   [key: string]: unknown;
 }
 
@@ -123,4 +123,10 @@ export type UpdateBoardInput = {
 export interface BoundElement {
   id: string;
   type: string;
+}
+
+export interface EnsureBoardInput {
+  external_key: string;
+  name?: string;
+  resource_type?: ResourceType;
 }

@@ -18,22 +18,34 @@ export const initializeLogger = (showToast: ShowToastFn): void => {
   showToastFn = showToast;
 };
 
+const formatLogArg = (arg: unknown): string => {
+  if (arg instanceof Error) {
+    return arg.message || arg.name;
+  }
+  if (typeof arg === 'object' && arg !== null) {
+    try {
+      return JSON.stringify(arg);
+    } catch {
+      return String(arg);
+    }
+  }
+  return String(arg);
+};
+
 const createLogger = <T extends WrappedConsoleMethods>(
   method: T,
   originalFn: Console[T]
 ): Console[T] => {
-  return ((...args: any[]) => {
+  return ((...args: unknown[]) => {
     let shouldShowToast = false;
     if (args.length > 0 && typeof args[args.length - 1] === 'boolean') {
       shouldShowToast = args.pop() as boolean;
     }
 
-    originalFn.apply(console, args);
+    originalFn.apply(console, args as never[]);
 
     if (shouldShowToast && showToastFn) {
-      const message = args
-        .map(arg => (typeof arg === 'object' ? JSON.stringify(arg) : String(arg)))
-        .join(' ');
+      const message = args.map(arg => formatLogArg(arg)).join(' ');
       showToastFn(message, toastTypeMap[method]);
     }
   }) as Console[T];

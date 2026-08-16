@@ -1,5 +1,6 @@
 import sqlite3 from 'sqlite3';
 import * as sqlite from 'sqlite';
+import type { Database as SqliteDatabase } from 'sqlite';
 import fs from 'fs';
 import path from 'path';
 import { dbConfig } from '../config';
@@ -50,10 +51,12 @@ class Database {
   public async initializeSchema(): Promise<void> {
     try {
       const currentDb = await this.getDb();
+      await this.migrateIntegerPrimaryKeys(currentDb);
+      await this.migrateDropElementsIndexUnique(currentDb);
 
-      const schemaPath = dbConfig.schemaPath;
-      if (!fs.existsSync(schemaPath)) {
-        throw new Error(`Schema file not found at ${schemaPath}`);
+      const schemaPath = resolveSchemaPath();
+      if (!schemaPath) {
+        throw new Error(`Schema file not found at ${dbConfig.schemaPath}`);
       }
       const schema = fs.readFileSync(schemaPath, 'utf8');
       await currentDb.exec(schema);
@@ -62,6 +65,60 @@ class Database {
       logger.error('Error initializing database schema:', error);
       throw error;
     }
+  }
+
+  private async migrateIntegerPrimaryKeys(currentDb: SqliteDatabase): Promise<void> {
+    const row = await currentDb.get<{ sql: string }>(
+      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'boards'`
+    );
+    if (!row?.sql) {
+      return;
+    }
+    const usesIntegerPk = /id\s+INTEGER\s+PRIMARY\s+KEY/i.test(row.sql);
+    if (!usesIntegerPk) {
+      return;
+    }
+    logger.warn('Migrating boards from integer PK to UUID; existing local boards will be dropped.');
+    await currentDb.exec(`
+      PRAGMA foreign_keys = OFF;
+      DROP TABLE IF EXISTS libraries;
+      DROP TABLE IF EXISTS files;
+      DROP TABLE IF EXISTS elements;
+      DROP TABLE IF EXISTS boards;
+      PRAGMA foreign_keys = ON;
+    `);
+  }
+
+  private async migrateDropElementsIndexUnique(currentDb: SqliteDatabase): Promise<void> {
+    const row = await currentDb.get<{ sql: string }>(
+      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'elements'`
+    );
+    if (!row?.sql || !/UNIQUE\s*\(\s*element_index\s*,\s*board_id\s*\)/i.test(row.sql)) {
+      return;
+    }
+
+    logger.warn('Dropping UNIQUE(element_index, board_id) so multi-element scenes can save.');
+    await currentDb.exec(`
+      PRAGMA foreign_keys = OFF;
+      CREATE TABLE elements_new (
+        id TEXT NOT NULL,
+        board_id TEXT NOT NULL,
+        data TEXT NOT NULL,
+        element_index TEXT NOT NULL,
+        type TEXT NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+        updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+        is_deleted BOOLEAN NOT NULL DEFAULT 0,
+        PRIMARY KEY (id, board_id),
+        FOREIGN KEY (board_id) REFERENCES boards(id) ON DELETE CASCADE
+      );
+      INSERT INTO elements_new (id, board_id, data, element_index, type, created_at, updated_at, is_deleted)
+        SELECT id, board_id, data, element_index, type, created_at, updated_at, is_deleted FROM elements;
+      DROP TABLE elements;
+      ALTER TABLE elements_new RENAME TO elements;
+      CREATE INDEX IF NOT EXISTS idx_elements_board_id ON elements(board_id);
+      PRAGMA foreign_keys = ON;
+    `);
   }
 
   public async close(): Promise<void> {
@@ -87,6 +144,17 @@ class Database {
 }
 
 const databaseInstance = Database.getInstance();
+
+const resolveSchemaPath = (): string | null => {
+  const candidates = [
+    dbConfig.schemaPath,
+    path.join(__dirname, 'schema.sql'),
+    path.join(__dirname, '..', 'lib', 'schema.sql'),
+    path.join(process.cwd(), 'src', 'lib', 'schema.sql'),
+    path.join(process.cwd(), 'packages', 'server', 'src', 'lib', 'schema.sql'),
+  ];
+  return candidates.find(candidate => fs.existsSync(candidate)) ?? null;
+};
 
 export const getDb = (): Promise<sqlite.Database> => databaseInstance.getDb();
 

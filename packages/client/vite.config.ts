@@ -11,11 +11,17 @@ export default defineConfig({
     },
   },
   server: {
-    port: 3000,
+    host: '127.0.0.1',
+    port: 4002,
     proxy: {
       '/api': {
-        target: 'http://localhost:4000',
+        target: 'http://127.0.0.1:4001',
         changeOrigin: true,
+      },
+      '/collab': {
+        target: 'http://127.0.0.1:4001',
+        changeOrigin: true,
+        ws: true,
       },
     },
   },

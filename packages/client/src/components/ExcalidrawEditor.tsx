@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Excalidraw, useHandleLibrary } from '@excalidraw/excalidraw';
 import type {
   ExcalidrawImperativeAPI,
@@ -8,13 +8,14 @@ import type {
 } from '@excalidraw/excalidraw/types';
 import '../styles/ExcalidrawEditor.scss';
 import { ElementService } from '../services/elementService';
+import { LibraryService } from '../services/libraryService';
 import { useExcalidrawEditor } from '../hooks/useExcalidrawEditor';
 import Loader from './Loader';
 import { useTheme } from '../contexts/ThemeProvider';
 import { ExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import logger from '../utils/logger';
 import Utils from '../utils';
-import { LibraryService } from '../services/libraryService';
+import { useCollab } from '../hooks/useCollab';
 
 interface ExcalidrawEditorProps {
   boardId: string;
@@ -37,6 +38,12 @@ const ExcalidrawEditor = ({ boardId }: ExcalidrawEditorProps) => {
     setExcalidrawAPI,
     handleChange: originalHandleChange,
   } = useExcalidrawEditor(boardId);
+  const applyingRemoteRef = useRef(false);
+  const { publishScene, publishPointer, isCollaborating } = useCollab({
+    boardId,
+    api: excalidrawAPI,
+    applyingRemoteRef,
+  });
 
   const handleExcalidrawAPI = useCallback(
     (api: ExcalidrawImperativeAPI) => setExcalidrawAPI(api),
@@ -49,6 +56,10 @@ const ExcalidrawEditor = ({ boardId }: ExcalidrawEditorProps) => {
       appState: AppState,
       updatedFiles: BinaryFiles | null
     ) => {
+      if (applyingRemoteRef.current) {
+        return;
+      }
+
       if (
         updatedElements.length === 0 &&
         (!updatedFiles || Object.keys(updatedFiles).length === 0)
@@ -60,13 +71,24 @@ const ExcalidrawEditor = ({ boardId }: ExcalidrawEditorProps) => {
 
       debouncedHandleChange(() => {
         originalHandleChange(updatedElements, filesSnapshot);
+        publishScene({ elements: updatedElements, files: filesSnapshot });
       });
 
       if (appState?.theme && appState.theme !== currentAppTheme) {
         setAppTheme(appState.theme);
       }
     },
-    [originalHandleChange, currentAppTheme, setAppTheme]
+    [originalHandleChange, currentAppTheme, setAppTheme, publishScene]
+  );
+
+  const handlePointerUpdate = useCallback(
+    (payload: {
+      pointer: { x: number; y: number; tool: 'pointer' | 'laser' };
+      button: 'down' | 'up';
+    }) => {
+      publishPointer({ pointer: payload.pointer, button: payload.button });
+    },
+    [publishPointer]
   );
 
   const libraryAdapter = useMemo(() => {
@@ -173,6 +195,8 @@ const ExcalidrawEditor = ({ boardId }: ExcalidrawEditorProps) => {
             },
           }}
           onChange={handleChange}
+          onPointerUpdate={handlePointerUpdate}
+          isCollaborating={isCollaborating}
           name={`Board: ${boardId}`}
           excalidrawAPI={handleExcalidrawAPI}
           UIOptions={{

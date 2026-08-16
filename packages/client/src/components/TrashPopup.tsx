@@ -58,9 +58,9 @@ const TrashPopup = ({ onClose, isOpen }: TrashPopupProps) => {
     }
   };
 
-  const handleRestore = async (boardId: number) => {
+  const handleRestore = async (boardId: string) => {
     try {
-      await BoardService.restoreBoard(boardId.toString());
+      await BoardService.restoreBoard(boardId);
       setTrashedBoards(prev => prev.filter(board => board.id !== boardId));
       fetchBoards();
       navigate(`/board/${boardId}`);
@@ -70,7 +70,7 @@ const TrashPopup = ({ onClose, isOpen }: TrashPopupProps) => {
     }
   };
 
-  const handlePermanentDelete = async (boardId: number) => {
+  const handlePermanentDelete = async (boardId: string) => {
     if (
       !window.confirm(
         'Are you sure you want to permanently delete this board? This action cannot be undone.'
@@ -80,7 +80,7 @@ const TrashPopup = ({ onClose, isOpen }: TrashPopupProps) => {
     }
 
     try {
-      await BoardService.permanentlyDeleteBoard(boardId.toString());
+      await BoardService.permanentlyDeleteBoard(boardId);
       setTrashedBoards(prev => prev.filter(board => board.id !== boardId));
     } catch (error) {
       setError('Error connecting to server');

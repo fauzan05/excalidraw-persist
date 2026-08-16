@@ -1,28 +1,12 @@
-import express, { Request, Response, NextFunction } from 'express';
-import cors from 'cors';
-import morgan from 'morgan';
+import http from 'http';
 import { serverConfig } from './config';
 import { openDatabase, initializeDatabase, closeDatabase } from './lib/database';
-import apiRoutes from './routes';
+import { createApp } from './app';
+import { attachCollab } from './lib/collab';
 import logger from './utils/logger';
 
-const app = express();
+const app = createApp();
 const PORT = serverConfig.port;
-
-app.use(cors());
-app.use(morgan('dev'));
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true }));
-
-app.use('/api', apiRoutes);
-
-app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
-  logger.error('Unhandled error:', err);
-  res.status(500).json({
-    success: false,
-    message: 'Internal server error',
-  });
-});
 
 const startServer = async () => {
   try {
@@ -32,23 +16,22 @@ const startServer = async () => {
     await initializeDatabase();
     logger.info('Database initialized');
 
-    app.listen(PORT, () => {
+    const server = http.createServer(app);
+    attachCollab(server);
+
+    server.listen(PORT, () => {
       logger.info(`Server is running on http://localhost:${PORT}`);
     });
 
-    process.on('SIGINT', async () => {
+    const shutdown = async () => {
       logger.info('Shutting down server...');
       await closeDatabase();
       logger.info('Database connection closed');
       process.exit(0);
-    });
+    };
 
-    process.on('SIGTERM', async () => {
-      logger.info('Shutting down server...');
-      await closeDatabase();
-      logger.info('Database connection closed');
-      process.exit(0);
-    });
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
 
     process.on('uncaughtException', function (err) {
       logger.error('Unhandled Exception:', err);

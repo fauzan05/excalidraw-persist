@@ -16,8 +16,29 @@ A self-hostable app with server-side persistence and multiple boards based on Ex
 - 🗃️ SQLite database for simple deployment
 
 
+- [x] Collaboration support (WebSocket room = board UUID)
+
+## COSL embed
+
+COSL Meetings and Documents open a single board in embed mode:
+
+`/embed/{boardUuid}?token={jwt}`
+
+JWT claims: `board_id`, `resource_type` (`meeting` | `document`), `exp`. Service-to-service EnsureBoard uses `SERVICE_API_KEY` (`POST /api/service/boards/ensure`).
+
+COSL local (until the local Docker image builds): run the API on `:4001` and the Vite SPA on `:4002` (proxies `/api` and `/collab` to the API). `JWT_SECRET` / `SERVICE_API_KEY` must match Go `excalidraw.embed_jwt_secret` / `service_api_key`.
+
+```bash
+# API
+cd packages/server
+# Windows PowerShell: $env:PORT='4001'; $env:JWT_SECRET='...'; $env:SERVICE_API_KEY='...'
+pnpm exec ts-node --transpile-only src/index.ts
+
+# SPA (another terminal)
+pnpm --filter @excalidraw-persist/client dev
+```
+
 ## TODO
-- [ ] Collaboration support
 
 ## Development
 
@@ -99,7 +120,8 @@ The server container accepts the following environment variables:
 
 - `PORT` - The port the server will listen on (default: 4000)
 - `NODE_ENV` - The environment mode (default: production)
-- `DB_PATH` - The path to the SQLite database file (default: /app/data/database.sqlite)
+- `JWT_SECRET` - HMAC secret used to verify Go-issued embed JWTs on REST and `/collab`
+- `SERVICE_API_KEY` - server-to-server key for EnsureBoard / GetScene / PutScene
 
 You can modify these in the `docker-compose.yml` file:
 

@@ -5,7 +5,7 @@ import ExcalidrawEditor from './ExcalidrawEditor';
 import Loader from './Loader';
 
 const BoardPage = () => {
-  const { isLoading, activeBoardId } = useBoardContext();
+  const { isLoading, activeBoardId, embed } = useBoardContext();
 
   if (isLoading) {
     return (
@@ -27,8 +27,8 @@ const BoardPage = () => {
   }
 
   return (
-    <div className="board-page">
-      <Header />
+    <div className="board-page" data-embed={embed ? 'true' : 'false'}>
+      {!embed && <Header />}
       <div className="editor-container">
         <ExcalidrawEditor key={activeBoardId} boardId={activeBoardId} />
       </div>

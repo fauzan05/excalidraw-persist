@@ -9,7 +9,7 @@ interface ReplaceAllOptions {
 
 export class ElementModel {
   public static async replaceAll(
-    boardId: number,
+    boardId: string,
     elements: ExcalidrawElement[],
     options: ReplaceAllOptions = {}
   ): Promise<void> {
@@ -33,11 +33,15 @@ export class ElementModel {
         const stmt = await db.prepare(sql);
 
         for (const element of elements) {
+          const elementIndex =
+            typeof element.index === 'string' && element.index.trim() !== ''
+              ? element.index
+              : element.id;
           const dbElementData = [
             element.id,
             boardId,
             JSON.stringify(element),
-            element.index || '',
+            elementIndex,
             element.type,
             now,
             now,
@@ -60,7 +64,7 @@ export class ElementModel {
     }
   }
 
-  public static async findById(boardId: number, id: string): Promise<Element | undefined> {
+  public static async findById(boardId: string, id: string): Promise<Element | undefined> {
     const db = await getDb();
     const result = await db.get<Element | undefined>(
       'SELECT * FROM elements WHERE board_id = ? AND id = ?',
@@ -69,7 +73,7 @@ export class ElementModel {
     return result;
   }
 
-  public static async findAllByBoardId(boardId: number): Promise<Element[]> {
+  public static async findAllByBoardId(boardId: string): Promise<Element[]> {
     const db = await getDb();
 
     const result = await db.all<Element[]>(
@@ -80,7 +84,7 @@ export class ElementModel {
     return result;
   }
 
-  public static async markAsDeleted(boardId: number, id: string): Promise<void> {
+  public static async markAsDeleted(boardId: string, id: string): Promise<void> {
     const db = await getDb();
     const now = Date.now();
 
@@ -99,7 +103,7 @@ export class ElementModel {
     );
   }
 
-  public static async permanentlyDelete(boardId: number, id: string): Promise<void> {
+  public static async permanentlyDelete(boardId: string, id: string): Promise<void> {
     const db = await getDb();
     await db.run('DELETE FROM elements WHERE board_id = ? AND id = ?', [boardId, id]);
   }
@@ -118,13 +122,13 @@ export class ElementModel {
   }
 
   public static async countByBoardId(
-    boardId: number,
+    boardId: string,
     includeDeleted: boolean = false
   ): Promise<number> {
     const db = await getDb();
 
     let query = 'SELECT COUNT(*) as count FROM elements WHERE board_id = ?';
-    const params: number[] = [boardId];
+    const params: string[] = [boardId];
 
     if (!includeDeleted) {
       query += ' AND is_deleted = 0';

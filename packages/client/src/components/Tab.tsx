@@ -12,7 +12,7 @@ interface TabProps {
 const Tab = ({ board, activeBoardId }: TabProps) => {
   const { handleRenameBoard, handleDeleteBoard } = useBoardContext();
 
-  const isActive = board.id.toString() === activeBoardId;
+  const isActive = board.id === activeBoardId;
 
   return (
     <Link

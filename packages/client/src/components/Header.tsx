@@ -15,7 +15,7 @@ const Header = () => {
   }
 
   return (
-    <div className="header">
+    <div className="header" data-testid="whiteboard-board-list">
       <button className="trash-button" onClick={() => setIsTrashPopupOpen(true)}>
         <Icon name="trash" />
       </button>
