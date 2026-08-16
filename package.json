@@ -1,6 +1,6 @@
 {
   "name": "excalidraw-persist",
-  "version": "0.18.0-persist.1",
+  "version": "0.18.0-persist.7",
   "description": "Self-hostable Excalidraw server-side persistence, and multi-boards",
   "private": true,
   "scripts": {
@@ -20,6 +20,19 @@
   ],
   "author": "",
   "license": "MIT",
+  "pnpm": {
+    "overrides": {
+      "tar": ">=7.5.11",
+      "minimatch@>=9.0.0 <9.0.7": ">=9.0.7",
+      "nanoid@<3.3.8": ">=3.3.8",
+      "nanoid": ">=5.0.9",
+      "lodash-es": ">=4.18.1",
+      "dompurify": ">=3.3.3",
+      "brace-expansion": ">=5.0.5",
+      "@tootallnate/once": ">=3.0.1",
+      "mermaid": ">=10.9.4"
+    }
+  },
   "devDependencies": {
     "prettier": "^3.0.0"
   }
