@@ -1,5 +1,5 @@
 import type { Database } from 'sqlite';
-import { getDb } from '../lib/database';
+import { getDb, withTransaction } from '../lib/database';
 import { ExcalidrawBinaryFileData, ExcalidrawFilesMap, StoredFile } from '../types';
 
 interface ReplaceAllOptions {
@@ -13,13 +13,16 @@ export class FileModel {
     files: ExcalidrawFilesMap = {},
     options: ReplaceAllOptions = {}
   ): Promise<void> {
-    const db = options.db ?? (await getDb());
     const shouldManageTransaction = options.useTransaction ?? !options.db;
-    const now = Date.now();
-
     if (shouldManageTransaction) {
-      await db.run('BEGIN TRANSACTION');
+      await withTransaction(async db => {
+        await FileModel.replaceAll(boardId, files, { db, useTransaction: false });
+      });
+      return;
     }
+
+    const db = options.db ?? (await getDb());
+    const now = Date.now();
 
     try {
       await db.run('DELETE FROM files WHERE board_id = ?', [boardId]);
@@ -37,17 +40,49 @@ export class FileModel {
 
         await stmt.finalize();
       }
-
-      if (shouldManageTransaction) {
-        await db.run('COMMIT');
-      }
     } catch (error) {
-      if (shouldManageTransaction) {
-        await db.run('ROLLBACK');
-      }
       console.error(`Error replacing files for board ${boardId}:`, error);
       throw error;
     }
+  }
+
+  public static async upsertMany(boardId: string, files: ExcalidrawFilesMap = {}): Promise<void> {
+    const entries = Object.entries(files);
+    if (entries.length === 0) {
+      return;
+    }
+
+    await withTransaction(async db => {
+      const now = Date.now();
+      const sql = `INSERT INTO files (id, board_id, data, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(id, board_id) DO UPDATE SET
+          data = excluded.data,
+          updated_at = excluded.updated_at`;
+      const stmt = await db.prepare(sql);
+      try {
+        for (const [id, file] of entries) {
+          const fileId = file.id || id;
+          const serializedFile = JSON.stringify({ ...file, id: fileId });
+          await stmt.run([fileId, boardId, serializedFile, now, now]);
+        }
+      } finally {
+        await stmt.finalize();
+      }
+    });
+  }
+
+  public static async checkExisting(boardId: string, fileIds: string[]): Promise<string[]> {
+    if (fileIds.length === 0) {
+      return [];
+    }
+    const db = await getDb();
+    const placeholders = fileIds.map(() => '?').join(', ');
+    const rows = await db.all<{ id: string }[]>(
+      `SELECT id FROM files WHERE board_id = ? AND id IN (${placeholders})`,
+      [boardId, ...fileIds]
+    );
+    return rows.map(row => row.id);
   }
 
   public static async findAllByBoardId(boardId: string): Promise<StoredFile[]> {

@@ -210,6 +210,52 @@ const run = async () => {
       `JWT PUT scene should succeed (${putJwt.status}) ${JSON.stringify(putJwtBody)}`
     );
 
+    const gotScene = await fetch(`${base}/api/boards/${boardId}/elements`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(gotScene.status, 200, 'GET scene after PUT should succeed');
+    const gotSceneJson = (await gotScene.json()) as {
+      data: { elements: Array<{ id: string }> };
+    };
+    const savedIds = new Set((gotSceneJson.data?.elements ?? []).map(element => element.id));
+    assert.ok(savedIds.has('e1') && savedIds.has('e2'), 'PUT elements should round-trip on GET');
+
+    const concurrentPuts = await Promise.all(
+      Array.from({ length: 8 }, (_, i) =>
+        fetch(`${base}/api/boards/${boardId}/elements`, {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            elements: [
+              { id: 'e1', type: 'rectangle', index: 'a0' },
+              { id: `stroke-${i}`, type: 'freedraw', index: `a${i + 1}` },
+            ],
+            files: {},
+          }),
+        })
+      )
+    );
+    for (const res of concurrentPuts) {
+      const body = await json(res);
+      assert.equal(
+        res.status,
+        200,
+        `concurrent PUT should succeed (${res.status}) ${JSON.stringify(body)}`
+      );
+    }
+
+    const afterConcurrent = await fetch(`${base}/api/boards/${boardId}/elements`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(afterConcurrent.status, 200, 'GET after concurrent PUTs should succeed');
+    const afterConcurrentJson = (await afterConcurrent.json()) as {
+      data: { elements: Array<{ id: string }> };
+    };
+    assert.ok(
+      (afterConcurrentJson.data?.elements ?? []).length >= 1,
+      'scene should keep replaced elements after concurrent PUTs'
+    );
+
     const helloPayload = await new Promise<string>(resolve => {
       const timer = setTimeout(() => resolve(''), 3000);
       const req = http.request({

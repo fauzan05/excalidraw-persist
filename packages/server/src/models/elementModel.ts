@@ -1,5 +1,5 @@
 import type { Database } from 'sqlite';
-import { getDb } from '../lib/database';
+import { getDb, withTransaction } from '../lib/database';
 import { Element, ExcalidrawElement } from '../types';
 
 interface ReplaceAllOptions {
@@ -13,18 +13,28 @@ export class ElementModel {
     elements: ExcalidrawElement[],
     options: ReplaceAllOptions = {}
   ): Promise<void> {
-    const db = options.db ?? (await getDb());
     const shouldManageTransaction = options.useTransaction ?? !options.db;
-    const now = Date.now();
-
     if (shouldManageTransaction) {
-      await db.run('BEGIN TRANSACTION');
+      await withTransaction(async db => {
+        await ElementModel.replaceAll(boardId, elements, { db, useTransaction: false });
+      });
+      return;
     }
+
+    const db = options.db ?? (await getDb());
+    const now = Date.now();
+    const uniqueById = new Map<string, ExcalidrawElement>();
+    for (const element of elements) {
+      if (element?.id) {
+        uniqueById.set(element.id, element);
+      }
+    }
+    const uniqueElements = [...uniqueById.values()];
 
     try {
       await db.run('DELETE FROM elements WHERE board_id = ?', [boardId]);
 
-      if (elements.length > 0) {
+      if (uniqueElements.length > 0) {
         const sql = `INSERT INTO elements 
           (id, board_id, data, element_index, type, created_at, updated_at, is_deleted) 
         VALUES 
@@ -32,7 +42,7 @@ export class ElementModel {
 
         const stmt = await db.prepare(sql);
 
-        for (const element of elements) {
+        for (const element of uniqueElements) {
           const elementIndex =
             typeof element.index === 'string' && element.index.trim() !== ''
               ? element.index
@@ -51,14 +61,7 @@ export class ElementModel {
         }
         await stmt.finalize();
       }
-
-      if (shouldManageTransaction) {
-        await db.run('COMMIT');
-      }
     } catch (error) {
-      if (shouldManageTransaction) {
-        await db.run('ROLLBACK');
-      }
       console.error(`Error replacing elements for board ${boardId}:`, error);
       throw error;
     }

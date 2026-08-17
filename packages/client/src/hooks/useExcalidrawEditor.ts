@@ -1,14 +1,45 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { restoreElements } from '@excalidraw/excalidraw';
 import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import type { BinaryFiles, ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
-import { ElementService } from '../services/elementService';
+import { ElementService, type BoardSceneData } from '../services/elementService';
 import logger from '../utils/logger';
 
 export const useExcalidrawEditor = (boardId: string | undefined) => {
   const [elements, setElements] = useState<ExcalidrawElement[]>([]);
   const [files, setFiles] = useState<BinaryFiles>({});
   const [excalidrawAPI, setExcalidrawAPI] = useState<ExcalidrawImperativeAPI | null>(null);
+  const pendingSceneRef = useRef<BoardSceneData | null>(null);
+  const inFlightRef = useRef(false);
+  const boardIdRef = useRef(boardId);
+  boardIdRef.current = boardId;
+
+  const flushSave = useCallback(async () => {
+    const currentBoardId = boardIdRef.current;
+    if (!currentBoardId || inFlightRef.current) {
+      return;
+    }
+    const scene = pendingSceneRef.current;
+    if (!scene) {
+      return;
+    }
+    pendingSceneRef.current = null;
+    inFlightRef.current = true;
+    try {
+      await ElementService.replaceAllElements(currentBoardId, scene);
+    } catch (error) {
+      logger.error('Error saving scene data:', error, true);
+    } finally {
+      inFlightRef.current = false;
+      if (pendingSceneRef.current) {
+        void flushSave();
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    pendingSceneRef.current = null;
+  }, [boardId]);
 
   const handleChange = useCallback(
     (excalidrawElements: readonly ExcalidrawElement[], excalidrawFiles: BinaryFiles | null) => {
@@ -24,12 +55,11 @@ export const useExcalidrawEditor = (boardId: string | undefined) => {
       setFiles(filesMap);
 
       if (boardId) {
-        ElementService.replaceAllElements(boardId, { elements: elementsArray, files: filesMap }).catch(
-          error => logger.error('Error saving scene data:', error, true)
-        );
+        pendingSceneRef.current = { elements: elementsArray, files: filesMap };
+        void flushSave();
       }
     },
-    [boardId]
+    [boardId, flushSave]
   );
 
   return {

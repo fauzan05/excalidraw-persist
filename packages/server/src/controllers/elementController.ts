@@ -2,10 +2,17 @@ import { Request, Response } from 'express';
 import { ElementModel } from '../models/elementModel';
 import { BoardModel } from '../models/boardModel';
 import { FileModel } from '../models/fileModel';
-import { getDb } from '../lib/database';
+import { withTransaction } from '../lib/database';
 import { isBoardUUID } from '../lib/boardId';
 import { ExcalidrawElement, ExcalidrawFilesMap, ExcalidrawSceneData } from '../types';
 import logger from '../utils/logger';
+
+const failMessage = (prefix: string, error: unknown): string => {
+  if (error instanceof Error && error.message) {
+    return `${prefix}: ${error.message}`;
+  }
+  return prefix;
+};
 
 const invalidId = (res: Response) =>
   res.status(400).json({ success: false, message: 'Invalid board ID format' });
@@ -20,17 +27,11 @@ export const loadScene = async (boardId: string) => {
 };
 
 export const saveScene = async (boardId: string, scene: ExcalidrawSceneData) => {
-  const db = await getDb();
-  await db.run('BEGIN TRANSACTION');
-  try {
+  await withTransaction(async db => {
     await ElementModel.replaceAll(boardId, scene.elements, { db, useTransaction: false });
     await FileModel.replaceAll(boardId, scene.files || {}, { db, useTransaction: false });
-    await db.run('COMMIT');
-  } catch (transactionError) {
-    await db.run('ROLLBACK');
-    throw transactionError;
-  }
-  await BoardModel.update(boardId, {});
+    await BoardModel.update(boardId, {});
+  });
 };
 
 const parseSceneBody = (
@@ -120,7 +121,56 @@ export const elementController = {
       logger.error(`Error replacing elements for board ${req.params.boardId}:`, error);
       return res.status(500).json({
         success: false,
-        message: 'Failed to replace elements',
+        message: failMessage('Failed to replace elements', error),
+      });
+    }
+  },
+
+  async applyDelta(
+    req: Request<
+      { boardId: string },
+      unknown,
+      { upserted?: ExcalidrawElement[]; deleted?: string[] }
+    >,
+    res: Response
+  ) {
+    try {
+      const { boardId } = req.params;
+      if (!isBoardUUID(boardId)) {
+        return invalidId(res);
+      }
+
+      const board = await BoardModel.findById(boardId);
+      if (!board) {
+        return res.status(404).json({
+          success: false,
+          message: 'Board not found',
+        });
+      }
+
+      const upserted = Array.isArray(req.body?.upserted) ? req.body.upserted : [];
+      const deleted = Array.isArray(req.body?.deleted) ? req.body.deleted : [];
+      const deletedSet = new Set(deleted.filter(id => typeof id === 'string' && id.trim()));
+      const current = await loadScene(boardId);
+      const byId = new Map(
+        current.elements.filter(element => !deletedSet.has(element.id)).map(element => [element.id, element])
+      );
+      for (const element of upserted) {
+        if (element?.id) {
+          byId.set(element.id, element);
+        }
+      }
+      await saveScene(boardId, { elements: [...byId.values()], files: current.files });
+
+      return res.status(200).json({
+        success: true,
+        message: `Delta applied for board ${boardId}`,
+      });
+    } catch (error) {
+      logger.error(`Error applying delta for board ${req.params.boardId}:`, error);
+      return res.status(500).json({
+        success: false,
+        message: failMessage('Failed to apply delta', error),
       });
     }
   },

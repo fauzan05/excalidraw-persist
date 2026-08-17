@@ -4,9 +4,16 @@ import { BoardModel } from '../models/boardModel';
 import { ElementModel } from '../models/elementModel';
 import { FileModel } from '../models/fileModel';
 import { LibraryModel } from '../models/libraryModel';
-import { getDb } from '../lib/database';
+import { loadScene, saveScene } from './elementController';
 import { ExcalidrawElement, ExcalidrawFilesMap, ExcalidrawSceneData } from '../types';
 import logger from '../utils/logger';
+
+const failMessage = (prefix: string, error: unknown): string => {
+  if (error instanceof Error && error.message) {
+    return `${prefix}: ${error.message}`;
+  }
+  return prefix;
+};
 
 // Owner-facing: create/get share link for a board
 export const shareController = {
@@ -115,33 +122,24 @@ export const sharedController = {
         return res.status(403).json({ success: false, message: 'Read-only share link' });
       }
 
-      const { upserted, deleted } = req.body as {
-        upserted: ExcalidrawElement[];
-        deleted: string[];
-      };
-
-      const db = await getDb();
-      await db.run('BEGIN TRANSACTION');
-
-      try {
-        if (upserted && upserted.length > 0) {
-          await ElementModel.upsertMany(link.board_id, upserted);
+      const upserted = Array.isArray(req.body?.upserted) ? req.body.upserted : [];
+      const deleted = Array.isArray(req.body?.deleted) ? req.body.deleted : [];
+      const deletedSet = new Set(deleted.filter(id => typeof id === 'string' && id.trim()));
+      const current = await loadScene(link.board_id);
+      const byId = new Map(
+        current.elements.filter(element => !deletedSet.has(element.id)).map(element => [element.id, element])
+      );
+      for (const element of upserted) {
+        if (element?.id) {
+          byId.set(element.id, element);
         }
-        if (deleted && deleted.length > 0) {
-          await ElementModel.deleteMany(link.board_id, deleted);
-        }
-        await db.run('COMMIT');
-      } catch (txError) {
-        await db.run('ROLLBACK');
-        throw txError;
       }
-
-      await BoardModel.update(link.board_id, {});
+      await saveScene(link.board_id, { elements: [...byId.values()], files: current.files });
 
       return res.status(200).json({ success: true, message: 'Delta applied' });
     } catch (error) {
       logger.error(`Error applying delta for share ${req.params.shareId}:`, error);
-      return res.status(500).json({ success: false, message: 'Failed to apply delta' });
+      return res.status(500).json({ success: false, message: failMessage('Failed to apply delta', error) });
     }
   },
 
@@ -177,24 +175,15 @@ export const sharedController = {
         return res.status(400).json({ success: false, message: 'Invalid request payload' });
       }
 
-      const db = await getDb();
-      await db.run('BEGIN TRANSACTION');
-
-      try {
-        await ElementModel.replaceAll(link.board_id, elements, { db, useTransaction: false });
-        await FileModel.replaceAll(link.board_id, files, { db, useTransaction: false });
-        await db.run('COMMIT');
-      } catch (txError) {
-        await db.run('ROLLBACK');
-        throw txError;
-      }
-
-      await BoardModel.update(link.board_id, {});
+      await saveScene(link.board_id, { elements, files });
 
       return res.status(200).json({ success: true, message: 'Elements replaced' });
     } catch (error) {
       logger.error(`Error replacing elements for share ${req.params.shareId}:`, error);
-      return res.status(500).json({ success: false, message: 'Failed to replace elements' });
+      return res.status(500).json({
+        success: false,
+        message: failMessage('Failed to replace elements', error),
+      });
     }
   },
 

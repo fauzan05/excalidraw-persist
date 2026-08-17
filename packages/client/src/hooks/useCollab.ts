@@ -174,15 +174,20 @@ export const useCollab = ({ boardId, api, applyingRemoteRef }: UseCollabOptions)
           const local = currentApi.getSceneElementsIncludingDeleted();
           const reconciled = reconcileElements(local, remote, currentApi.getAppState());
           applyingRemoteRef.current = true;
-          currentApi.updateScene({
-            elements: reconciled,
-            captureUpdate: CaptureUpdateAction.NEVER,
-          });
-          const files = payload.scene.files;
-          if (files) {
-            currentApi.addFiles(Object.values(files));
+          try {
+            currentApi.updateScene({
+              elements: reconciled,
+              captureUpdate: CaptureUpdateAction.NEVER,
+            });
+            const files = payload.scene.files;
+            if (files) {
+              currentApi.addFiles(Object.values(files));
+            }
+          } finally {
+            window.setTimeout(() => {
+              applyingRemoteRef.current = false;
+            }, 0);
           }
-          applyingRemoteRef.current = false;
         } catch (error) {
           logger.error('Failed to apply collab scene', error);
           applyingRemoteRef.current = false;

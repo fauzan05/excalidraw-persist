@@ -38,7 +38,9 @@ class Database {
       });
 
       await openedDb.run('PRAGMA foreign_keys = ON');
-      logger.info('Foreign key support enabled.');
+      await openedDb.exec('PRAGMA journal_mode = WAL');
+      await openedDb.run('PRAGMA busy_timeout = 5000');
+      logger.info('Foreign key support enabled (WAL, busy_timeout=5000).');
 
       this.db = openedDb;
       return this.db;
@@ -161,3 +163,35 @@ export const getDb = (): Promise<sqlite.Database> => databaseInstance.getDb();
 export const openDatabase = (): Promise<sqlite.Database> => databaseInstance.open();
 export const initializeDatabase = (): Promise<void> => databaseInstance.initializeSchema();
 export const closeDatabase = (): Promise<void> => databaseInstance.close();
+
+let exclusiveChain: Promise<unknown> = Promise.resolve();
+
+export const runExclusive = async <T>(fn: () => Promise<T>): Promise<T> => {
+  const run = exclusiveChain.then(fn, fn);
+  exclusiveChain = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+};
+
+export const withTransaction = async <T>(
+  fn: (db: SqliteDatabase) => Promise<T>
+): Promise<T> => {
+  return runExclusive(async () => {
+    const db = await getDb();
+    await db.run('BEGIN IMMEDIATE');
+    try {
+      const result = await fn(db);
+      await db.run('COMMIT');
+      return result;
+    } catch (error) {
+      try {
+        await db.run('ROLLBACK');
+      } catch {
+        // connection may already be idle after a failed BEGIN
+      }
+      throw error;
+    }
+  });
+};

@@ -4,7 +4,7 @@
   "description": "Server for Excalidraw Persist with persistence",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "nodemon --watch src -e ts --exec \"ts-node src/index.ts\"",
+    "dev": "nodemon --watch src -e ts --exec \"ts-node --transpile-only src/index.ts\"",
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "ts-node --transpile-only src/scripts/test-b18.ts",

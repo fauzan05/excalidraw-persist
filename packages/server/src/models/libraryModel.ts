@@ -1,5 +1,5 @@
 import type { Database } from 'sqlite';
-import { getDb } from '../lib/database';
+import { getDb, withTransaction } from '../lib/database';
 import type { ExcalidrawLibraryItems, LibraryPersistedData, LibraryRecord } from '../types';
 import logger from '../utils/logger';
 
@@ -41,15 +41,17 @@ export class LibraryModel {
     libraryItems: ExcalidrawLibraryItems,
     options: SaveOptions = {}
   ): Promise<void> {
-    const db = options.db ?? (await getDb());
     const shouldManageTransaction = options.useTransaction ?? !options.db;
-    const now = Date.now();
-
-    const payload = JSON.stringify(libraryItems ?? []);
-
     if (shouldManageTransaction) {
-      await db.run('BEGIN TRANSACTION');
+      await withTransaction(async db => {
+        await LibraryModel.save(boardId, libraryItems, { db, useTransaction: false });
+      });
+      return;
     }
+
+    const db = options.db ?? (await getDb());
+    const now = Date.now();
+    const payload = JSON.stringify(libraryItems ?? []);
 
     try {
       await db.run(
@@ -62,14 +64,7 @@ export class LibraryModel {
         `,
         [boardId, payload, now]
       );
-
-      if (shouldManageTransaction) {
-        await db.run('COMMIT');
-      }
     } catch (error) {
-      if (shouldManageTransaction) {
-        await db.run('ROLLBACK');
-      }
       logger.error(`Failed to save library for board ${boardId}:`, error);
       throw error;
     }
