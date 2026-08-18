@@ -1,11 +1,11 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import '@excalidraw/excalidraw/index.css';
 import BoardPage from './components/BoardPage';
 import SharePage from './components/SharePage';
 import Loader from './components/Loader';
 import { BoardProvider, useBoardContext } from './contexts/BoardProvider';
 import { ThemeProvider } from './contexts/ThemeProvider';
 import './styles/App.scss';
-import '@excalidraw/excalidraw/index.css';
 
 const HomePage = () => {
   const { isLoading, boards } = useBoardContext();

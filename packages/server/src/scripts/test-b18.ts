@@ -13,7 +13,7 @@ const SERVICE_KEY = process.env.SERVICE_API_KEY as string;
 const mint = (
   boardId: string,
   expOffsetSeconds = 3600,
-  extra?: { sub?: string; username?: string }
+  extra?: { sub?: string; username?: string; avatar_url?: string }
 ) => {
   const now = Math.floor(Date.now() / 1000);
   return signHs256Jwt(
@@ -24,6 +24,7 @@ const mint = (
       exp: now + expOffsetSeconds,
       ...(extra?.sub ? { sub: extra.sub } : {}),
       ...(extra?.username ? { username: extra.username } : {}),
+      ...(extra?.avatar_url ? { avatar_url: extra.avatar_url } : {}),
     },
     JWT_SECRET
   );
@@ -187,10 +188,18 @@ const run = async () => {
     assert.notEqual(wsRejected, 101, 'WS without JWT must not upgrade');
     assert.ok(wsRejected === 401 || wsRejected === 0, `WS without JWT status ${wsRejected}`);
 
-    const namedToken = mint(boardId, 3600, { sub: 'user-1', username: 'Ada Lovelace' });
+    const namedToken = mint(boardId, 3600, {
+      sub: 'user-1',
+      username: 'Ada Lovelace',
+      avatar_url: 'http://localhost:3000/api/users/user-1/profile-picture/embed?token=hmac',
+    });
     const namedClaims = verifyHs256Jwt(namedToken, JWT_SECRET);
     assert.equal(namedClaims.sub, 'user-1');
     assert.equal(namedClaims.username, 'Ada Lovelace');
+    assert.equal(
+      namedClaims.avatar_url,
+      'http://localhost:3000/api/users/user-1/profile-picture/embed?token=hmac'
+    );
 
     const putJwt = await fetch(`${base}/api/boards/${boardId}/elements`, {
       method: 'PUT',
@@ -299,6 +308,10 @@ const run = async () => {
     assert.ok(
       helloPayload.includes('Ada Lovelace'),
       `collab hello should include username: ${helloPayload}`
+    );
+    assert.ok(
+      helloPayload.includes('profile-picture/embed'),
+      `collab hello should include avatar_url: ${helloPayload}`
     );
 
     console.log('B18 persist tests passed');

@@ -7,7 +7,7 @@ import type {
   SocketId,
 } from '@excalidraw/excalidraw/types';
 import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types';
-import { collabUrl } from '../utils/embed';
+import { collabUrl, readEmbedUser } from '../utils/embed';
 import logger from '../utils/logger';
 
 interface UseCollabOptions {
@@ -25,6 +25,7 @@ interface CollabPointer {
 interface CollabMember {
   client_id?: string;
   username?: string;
+  avatar_url?: string;
   pointer?: CollabPointer;
   button?: 'up' | 'down';
 }
@@ -48,21 +49,71 @@ const colorForId = (id: string): { background: string; stroke: string } => {
   return COLLAB_COLORS[hash % COLLAB_COLORS.length] ?? COLLAB_COLORS[0];
 };
 
-const toCollaborator = (member: CollabMember): { id: SocketId; value: Collaborator } | null => {
+/** Avoid Chrome "WebSocket is closed before the connection is established" (React Strict Mode). */
+const closeCollabSocket = (socket: WebSocket) => {
+  socket.onerror = null;
+  socket.onmessage = null;
+  socket.onclose = null;
+  if (socket.readyState === WebSocket.CONNECTING) {
+    socket.onopen = () => {
+      socket.onopen = null;
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.close();
+      }
+    };
+    return;
+  }
+  socket.onopen = null;
+  if (socket.readyState === WebSocket.OPEN) {
+    socket.close();
+  }
+};
+
+/** Excalidraw UserList filters out collaborators whose username is empty. */
+const toCollaborator = (
+  member: CollabMember,
+  options?: { isCurrentUser?: boolean }
+): { id: SocketId; value: Collaborator } | null => {
   const id = member.client_id?.trim();
   if (!id) {
     return null;
   }
+  const avatarUrl = member.avatar_url?.trim();
+  const httpAvatar =
+    avatarUrl && (avatarUrl.startsWith('http://') || avatarUrl.startsWith('https://'))
+      ? avatarUrl
+      : undefined;
+  const embedUser = options?.isCurrentUser ? readEmbedUser() : null;
+  const stableUserId = embedUser?.userId?.trim();
   return {
     id: id as SocketId,
     value: {
-      username: member.username || 'Guest',
+      id: stableUserId || id,
+      username: member.username?.trim() || 'Guest',
       pointer: member.pointer,
       button: member.button,
       color: colorForId(id),
       socketId: id as SocketId,
+      ...(options?.isCurrentUser ? { isCurrentUser: true } : {}),
+      ...(httpAvatar ? { avatarUrl: httpAvatar } : {}),
     },
   };
+};
+
+const selfMember = (clientId: string, extra?: CollabMember): CollabMember => {
+  const embedUser = readEmbedUser();
+  return {
+    client_id: clientId,
+    username: extra?.username?.trim() || embedUser?.username?.trim() || 'Guest',
+    avatar_url: extra?.avatar_url?.trim() || embedUser?.avatarUrl,
+    pointer: extra?.pointer,
+    button: extra?.button,
+  };
+};
+
+const seedClientId = (): string => {
+  const embedUser = readEmbedUser();
+  return embedUser?.userId?.trim() || 'self';
 };
 
 export const useCollab = ({ boardId, api, applyingRemoteRef }: UseCollabOptions) => {
@@ -70,19 +121,54 @@ export const useCollab = ({ boardId, api, applyingRemoteRef }: UseCollabOptions)
   const clientIdRef = useRef<string | null>(null);
   const collaboratorsRef = useRef(new Map<SocketId, Collaborator>());
   const apiRef = useRef(api);
-  const [isCollaborating, setIsCollaborating] = useState(false);
+  const recoverAttemptsRef = useRef(0);
+  // True from first Excalidraw paint so UserList is allowed before WS hello.
+  const [isCollaborating, setIsCollaborating] = useState(true);
   apiRef.current = api;
+  const apiReady = Boolean(api);
+
+  const rememberSelf = useCallback((clientId: string, extra?: CollabMember) => {
+    const mapped = toCollaborator(selfMember(clientId, extra), { isCurrentUser: true });
+    if (!mapped) {
+      return;
+    }
+    const existing = collaboratorsRef.current.get(mapped.id);
+    collaboratorsRef.current.set(mapped.id, { ...existing, ...mapped.value, isCurrentUser: true });
+  }, []);
 
   const pushCollaborators = useCallback(() => {
     const currentApi = apiRef.current;
     if (!currentApi) {
       return;
     }
+    const selfId = clientIdRef.current?.trim();
+    if (selfId && !collaboratorsRef.current.has(selfId as SocketId)) {
+      rememberSelf(selfId);
+    }
+    if (collaboratorsRef.current.size === 0) {
+      return;
+    }
     currentApi.updateScene({
       collaborators: new Map(collaboratorsRef.current),
       captureUpdate: CaptureUpdateAction.NEVER,
     });
-  }, []);
+  }, [rememberSelf]);
+
+  const seedSelfFromEmbed = useCallback(() => {
+    if (!clientIdRef.current) {
+      clientIdRef.current = seedClientId();
+    }
+    rememberSelf(clientIdRef.current);
+  }, [rememberSelf]);
+
+  // Safety: API attached after a roster arrived (should not happen once WS waits for API).
+  useEffect(() => {
+    if (!apiReady) {
+      return;
+    }
+    seedSelfFromEmbed();
+    pushCollaborators();
+  }, [apiReady, pushCollaborators, seedSelfFromEmbed]);
 
   const replaceCollaborators = useCallback(
     (members: CollabMember[]) => {
@@ -92,6 +178,25 @@ export const useCollab = ({ boardId, api, applyingRemoteRef }: UseCollabOptions)
         if (mapped) {
           next.set(mapped.id, mapped.value);
         }
+      }
+      const selfId = clientIdRef.current?.trim();
+      if (selfId) {
+        const existingSelf = collaboratorsRef.current.get(selfId as SocketId);
+        const incomingSelf = next.get(selfId as SocketId);
+        const seeded = toCollaborator(selfMember(selfId), { isCurrentUser: true });
+        next.set(selfId as SocketId, {
+          ...seeded?.value,
+          ...existingSelf,
+          ...incomingSelf,
+          id: seeded?.value.id || selfId,
+          socketId: selfId as SocketId,
+          isCurrentUser: true,
+          username:
+            incomingSelf?.username?.trim() ||
+            existingSelf?.username?.trim() ||
+            seeded?.value.username ||
+            'Guest',
+        });
       }
       collaboratorsRef.current = next;
       pushCollaborators();
@@ -106,27 +211,54 @@ export const useCollab = ({ boardId, api, applyingRemoteRef }: UseCollabOptions)
         return;
       }
       const existing = collaboratorsRef.current.get(mapped.id);
-      collaboratorsRef.current.set(mapped.id, { ...existing, ...mapped.value });
+      const isSelf = mapped.id === clientIdRef.current;
+      collaboratorsRef.current.set(mapped.id, {
+        ...existing,
+        ...mapped.value,
+        ...(isSelf ? { isCurrentUser: true } : {}),
+        username: mapped.value.username?.trim() || existing?.username?.trim() || 'Guest',
+        avatarUrl: mapped.value.avatarUrl || existing?.avatarUrl,
+      });
       pushCollaborators();
     },
     [pushCollaborators]
   );
 
+  /**
+   * Do not open collab WS until Excalidraw's imperative API exists.
+   * Hello-before-API drops updateScene; Excalidraw then applies initialData and
+   * UserList stays empty until a hard refresh (cached JS attaches API first).
+   * Embed `/embed/:id` and full `/board/:id` both use this hook via ExcalidrawEditor.
+   */
   useEffect(() => {
-    if (!boardId) {
+    if (!boardId || !apiReady) {
       return;
     }
 
-    let closed = false;
+    setIsCollaborating(true);
+    seedSelfFromEmbed();
+    pushCollaborators();
+
+    let disposed = false;
     let retry: number | undefined;
+    let socket: WebSocket | null = null;
+
     const connect = () => {
-      if (closed) return;
+      if (disposed) return;
       const ws = new WebSocket(collabUrl(boardId));
+      socket = ws;
       socketRef.current = ws;
       ws.onopen = () => {
-        if (!closed) {
-          setIsCollaborating(true);
+        if (disposed) {
+          ws.close();
+          return;
         }
+        setIsCollaborating(true);
+        pushCollaborators();
+      };
+      ws.onerror = () => {
+        // Strict Mode abort + proxied handshake failures are handled in onclose / remount.
+        if (disposed) return;
       };
       ws.onmessage = event => {
         try {
@@ -134,6 +266,7 @@ export const useCollab = ({ boardId, api, applyingRemoteRef }: UseCollabOptions)
             type?: string;
             client_id?: string;
             username?: string;
+            avatar_url?: string;
             scene?: { elements?: ExcalidrawElement[]; files?: Record<string, BinaryFileData> };
             collaborators?: CollabMember[];
             pointer?: CollabPointer;
@@ -142,7 +275,17 @@ export const useCollab = ({ boardId, api, applyingRemoteRef }: UseCollabOptions)
           const currentApi = apiRef.current;
 
           if (payload.type === 'hello' && payload.client_id) {
+            const previous = clientIdRef.current;
             clientIdRef.current = payload.client_id;
+            if (previous && previous !== payload.client_id) {
+              collaboratorsRef.current.delete(previous as SocketId);
+            }
+            rememberSelf(payload.client_id, {
+              client_id: payload.client_id,
+              username: payload.username,
+              avatar_url: payload.avatar_url,
+            });
+            pushCollaborators();
             return;
           }
 
@@ -155,6 +298,7 @@ export const useCollab = ({ boardId, api, applyingRemoteRef }: UseCollabOptions)
             upsertCollaborator({
               client_id: payload.client_id,
               username: payload.username,
+              avatar_url: payload.avatar_url,
               pointer: payload.pointer,
               button: payload.button,
             });
@@ -194,8 +338,10 @@ export const useCollab = ({ boardId, api, applyingRemoteRef }: UseCollabOptions)
         }
       };
       ws.onclose = () => {
-        setIsCollaborating(false);
-        if (!closed) {
+        if (socketRef.current === ws) {
+          socketRef.current = null;
+        }
+        if (!disposed) {
           retry = window.setTimeout(connect, 1500);
         }
       };
@@ -203,13 +349,26 @@ export const useCollab = ({ boardId, api, applyingRemoteRef }: UseCollabOptions)
 
     connect();
     return () => {
-      closed = true;
-      setIsCollaborating(false);
+      disposed = true;
       if (retry) window.clearTimeout(retry);
-      socketRef.current?.close();
-      socketRef.current = null;
+      const current = socket;
+      if (socketRef.current === current) {
+        socketRef.current = null;
+      }
+      if (current) {
+        closeCollabSocket(current);
+      }
     };
-  }, [api, applyingRemoteRef, boardId, replaceCollaborators, upsertCollaborator]);
+  }, [
+    apiReady,
+    applyingRemoteRef,
+    boardId,
+    pushCollaborators,
+    rememberSelf,
+    replaceCollaborators,
+    seedSelfFromEmbed,
+    upsertCollaborator,
+  ]);
 
   const publishScene = useCallback((scene: { elements: readonly ExcalidrawElement[]; files: unknown }) => {
     const ws = socketRef.current;
@@ -235,5 +394,29 @@ export const useCollab = ({ boardId, api, applyingRemoteRef }: UseCollabOptions)
     []
   );
 
-  return { publishScene, publishPointer, isCollaborating };
+  /** Recover if Excalidraw initialData restore wiped collaborators after the first push. */
+  const ensureCollaboratorsOnScene = useCallback(
+    (sceneCollaborators?: Map<SocketId, Collaborator>) => {
+      if (!apiRef.current || collaboratorsRef.current.size === 0) {
+        return;
+      }
+      const selfId = clientIdRef.current;
+      const sceneMap = sceneCollaborators;
+      const sceneHasRoster = Boolean(
+        sceneMap && sceneMap.size > 0 && (!selfId || sceneMap.has(selfId as SocketId))
+      );
+      if (sceneHasRoster) {
+        recoverAttemptsRef.current = 0;
+        return;
+      }
+      if (recoverAttemptsRef.current >= 8) {
+        return;
+      }
+      recoverAttemptsRef.current += 1;
+      pushCollaborators();
+    },
+    [pushCollaborators]
+  );
+
+  return { publishScene, publishPointer, isCollaborating, ensureCollaboratorsOnScene };
 };

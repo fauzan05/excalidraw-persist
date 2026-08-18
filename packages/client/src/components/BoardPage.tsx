@@ -30,6 +30,7 @@ const BoardPage = () => {
     <div className="board-page" data-embed={embed ? 'true' : 'false'}>
       {!embed && <Header />}
       <div className="editor-container">
+        {/* Embed `/embed/:id` and full `/board` both mount ExcalidrawEditor → useCollab. */}
         <ExcalidrawEditor key={activeBoardId} boardId={activeBoardId} />
       </div>
     </div>

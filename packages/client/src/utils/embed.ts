@@ -4,6 +4,7 @@ export interface EmbedUser {
   boardId: string;
   userId: string;
   username: string;
+  avatarUrl?: string;
 }
 
 export const isEmbedPath = (pathname: string = window.location.pathname): boolean =>
@@ -58,7 +59,10 @@ export const readEmbedUser = (): EmbedUser | null => {
   if (!boardId && !userId && !username) {
     return null;
   }
-  return { boardId, userId, username };
+  const rawAvatar = typeof payload.avatar_url === 'string' ? payload.avatar_url.trim() : '';
+  const avatarUrl =
+    rawAvatar.startsWith('http://') || rawAvatar.startsWith('https://') ? rawAvatar : undefined;
+  return { boardId, userId, username, avatarUrl };
 };
 
 export const authHeaders = (): Record<string, string> => {
@@ -69,6 +73,7 @@ export const authHeaders = (): Record<string, string> => {
   return { Authorization: `Bearer ${token}` };
 };
 
+/** Same-origin `/collab` — Vite (dev) and nginx (prod) proxy the upgrade to persist API :4001. */
 export const collabUrl = (boardId: string): string => {
   const token = readEmbedToken();
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';

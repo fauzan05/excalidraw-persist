@@ -9,6 +9,7 @@ export interface EmbedClaims {
   iat?: number;
   sub?: string;
   username?: string;
+  avatar_url?: string;
 }
 
 const base64UrlEncode = (input: Buffer | string): string => {
@@ -88,6 +89,10 @@ export const verifyHs256Jwt = (token: string, secret: string): EmbedClaims => {
     '';
   if (username) {
     claims.username = username;
+  }
+  const avatarUrl = typeof payload.avatar_url === 'string' ? payload.avatar_url.trim() : '';
+  if (avatarUrl.startsWith('http://') || avatarUrl.startsWith('https://')) {
+    claims.avatar_url = avatarUrl;
   }
   return claims;
 };

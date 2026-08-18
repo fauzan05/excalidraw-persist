@@ -20,6 +20,7 @@ interface CollabClient {
   buffer: Buffer;
   clientId: string;
   username: string;
+  avatarUrl?: string;
   pointer?: CollabPointer;
   button?: 'up' | 'down';
 }
@@ -146,19 +147,20 @@ export const broadcastScene = (boardId: string, scene: unknown, except: CollabCl
 const collaboratorPayload = (client: CollabClient) => ({
   client_id: client.clientId,
   username: client.username,
+  ...(client.avatarUrl ? { avatar_url: client.avatarUrl } : {}),
   pointer: client.pointer,
   button: client.button,
 });
+
+const roomRoster = (room: Set<CollabClient>) =>
+  [...room].map(member => collaboratorPayload(member));
 
 const broadcastPresence = (boardId: string, except: CollabClient | null) => {
   const room = rooms.get(boardId);
   if (!room) return;
   for (const client of room) {
     if (except && client === except) continue;
-    const others = [...room]
-      .filter(member => member !== client)
-      .map(member => collaboratorPayload(member));
-    send(client, { type: 'collaborators', board_id: boardId, collaborators: others });
+    send(client, { type: 'collaborators', board_id: boardId, collaborators: roomRoster(room) });
   }
 };
 
@@ -208,6 +210,7 @@ export const attachCollab = (server: http.Server) => {
     }
 
     let username = 'Guest';
+    let avatarUrl: string | undefined;
     if (env.JWT_SECRET) {
       if (!token) {
         reject(socket as Socket, 401, 'Unauthorized');
@@ -220,6 +223,9 @@ export const attachCollab = (server: http.Server) => {
           return;
         }
         username = claims.username || claims.sub || 'Guest';
+        if (claims.avatar_url) {
+          avatarUrl = claims.avatar_url;
+        }
       } catch {
         reject(socket as Socket, 401, 'Unauthorized');
         return;
@@ -241,6 +247,7 @@ export const attachCollab = (server: http.Server) => {
       buffer: Buffer.from(head || []),
       clientId: crypto.randomBytes(8).toString('hex'),
       username,
+      avatarUrl,
     };
     addToRoom(client);
     send(client, {
@@ -248,12 +255,14 @@ export const attachCollab = (server: http.Server) => {
       board_id: boardId,
       client_id: client.clientId,
       username: client.username,
+      ...(client.avatarUrl ? { avatar_url: client.avatarUrl } : {}),
     });
     const room = rooms.get(boardId);
-    const others = room
-      ? [...room].filter(member => member !== client).map(member => collaboratorPayload(member))
-      : [];
-    send(client, { type: 'collaborators', board_id: boardId, collaborators: others });
+    send(client, {
+      type: 'collaborators',
+      board_id: boardId,
+      collaborators: room ? roomRoster(room) : [collaboratorPayload(client)],
+    });
     broadcastPresence(boardId, client);
 
     socket.on('data', (chunk: Buffer) => {

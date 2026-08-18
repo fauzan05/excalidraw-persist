@@ -19,8 +19,9 @@ const startServer = async () => {
     const server = http.createServer(app);
     attachCollab(server);
 
-    server.listen(PORT, () => {
-      logger.info(`Server is running on http://localhost:${PORT}`);
+    const HOST = process.env.HOST || '0.0.0.0';
+    server.listen(PORT, HOST, () => {
+      logger.info(`Server is running on http://${HOST}:${PORT}`);
     });
 
     const shutdown = async () => {

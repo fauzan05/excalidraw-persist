@@ -39,7 +39,7 @@ const ExcalidrawEditor = ({ boardId }: ExcalidrawEditorProps) => {
     handleChange: originalHandleChange,
   } = useExcalidrawEditor(boardId);
   const applyingRemoteRef = useRef(false);
-  const { publishScene, publishPointer, isCollaborating } = useCollab({
+  const { publishScene, publishPointer, isCollaborating, ensureCollaboratorsOnScene } = useCollab({
     boardId,
     api: excalidrawAPI,
     applyingRemoteRef,
@@ -56,6 +56,10 @@ const ExcalidrawEditor = ({ boardId }: ExcalidrawEditorProps) => {
       appState: AppState,
       updatedFiles: BinaryFiles | null
     ) => {
+      if (!applyingRemoteRef.current) {
+        ensureCollaboratorsOnScene(appState.collaborators);
+      }
+
       if (applyingRemoteRef.current) {
         return;
       }
@@ -78,7 +82,7 @@ const ExcalidrawEditor = ({ boardId }: ExcalidrawEditorProps) => {
         setAppTheme(appState.theme);
       }
     },
-    [originalHandleChange, currentAppTheme, setAppTheme, publishScene]
+    [originalHandleChange, currentAppTheme, setAppTheme, publishScene, ensureCollaboratorsOnScene]
   );
 
   const handlePointerUpdate = useCallback(
