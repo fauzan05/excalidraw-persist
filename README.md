@@ -26,16 +26,42 @@ COSL Meetings and Documents open a single board in embed mode:
 
 JWT claims: `board_id`, `resource_type` (`meeting` | `document`), `exp`. Service-to-service EnsureBoard uses `SERVICE_API_KEY` (`POST /api/service/boards/ensure`).
 
-COSL local (until the local Docker image builds): run the API on `:4001` and the Vite SPA on `:4002` (proxies `/api` and `/collab` to the API). `JWT_SECRET` / `SERVICE_API_KEY` must match Go `excalidraw.embed_jwt_secret` / `service_api_key`.
+COSL local (recommended): run the Docker stack so Go (`cosl-backend-dev`) reaches persist on `cosl-network` without `host.docker.internal`:
 
 ```bash
-# API
+cd excalidraw-persist
+docker compose -p excalidraw-persist up -d --build
+```
+
+Set Go `config.json`:
+
+- `excalidraw.api_url`: `http://excalidraw:4000` (internal Docker DNS)
+- `excalidraw.public_url`: `http://localhost:4002` (browser iframe)
+- `embed_jwt_secret` / `service_api_key`: match `JWT_SECRET` / `SERVICE_API_KEY` in `docker-compose.yml` (or `.env`)
+
+Ports: API **4001**, SPA (nginx) **4002**. SQLite lives in the named volume `excalidraw-data`.
+
+Until the local Docker image builds, you can run host Node (not recommended): API on `:4001` and Vite SPA on `:4002`. `JWT_SECRET` / `SERVICE_API_KEY` must match Go `excalidraw.embed_jwt_secret` / `service_api_key`.
+
+The API **must bind `0.0.0.0:4001`**, not `127.0.0.1`. Docker Go (`cosl-backend-dev`) calls `http://host.docker.internal:4001`. Host `127.0.0.1:4001/api/health` can be 200 while the container times out if the process is loopback-only.
+
+```bash
+# API (Windows PowerShell) — bind all interfaces so Docker Desktop can reach the host
 cd packages/server
-# Windows PowerShell: $env:PORT='4001'; $env:JWT_SECRET='...'; $env:SERVICE_API_KEY='...'
+$env:PORT='4001'
+$env:HOST='0.0.0.0'
+$env:JWT_SECRET='...'   # must match Go excalidraw.embed_jwt_secret
+$env:SERVICE_API_KEY='...'  # must match Go excalidraw.service_api_key
 pnpm exec ts-node --transpile-only src/index.ts
 
 # SPA (another terminal)
 pnpm --filter @excalidraw-persist/client dev
+```
+
+Prove from **inside** the backend container (host health is not enough):
+
+```bash
+docker exec cosl-backend-dev curl -sS -m 5 -w "\nHTTP:%{http_code}\n" http://host.docker.internal:4001/api/health
 ```
 
 ## TODO

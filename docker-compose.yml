@@ -4,19 +4,34 @@ services:
       context: .
       dockerfile: Dockerfile
     image: cosl-excalidraw-persist:local
+    container_name: cosl-excalidraw-persist
     ports:
-      - '4002:80' # Web client - change first number if needed
-      - '4001:4000' # Server API - matches original setup
+      - '0.0.0.0:4002:80'
+      - '0.0.0.0:4001:4000'
     volumes:
-      - data:/app/data
+      - excalidraw-data:/app/data
     environment:
       - PORT=4000
+      - HOST=0.0.0.0
       - NODE_ENV=production
       - DB_PATH=/app/data/database.sqlite
       - JWT_SECRET=${EXCALIDRAW_JWT_SECRET:-change-me-excalidraw-embed-jwt-secret-min-32}
       - SERVICE_API_KEY=${EXCALIDRAW_SERVICE_API_KEY:-change-me-excalidraw-service-api-key}
     restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:4000/api/health']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+    networks:
+      - default
+      - cosl-network
+
+networks:
+  cosl-network:
+    external: true
 
 volumes:
-  data:
+  excalidraw-data:
     driver: local

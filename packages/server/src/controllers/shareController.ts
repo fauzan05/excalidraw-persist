@@ -124,7 +124,7 @@ export const sharedController = {
 
       const upserted = Array.isArray(req.body?.upserted) ? req.body.upserted : [];
       const deleted = Array.isArray(req.body?.deleted) ? req.body.deleted : [];
-      const deletedSet = new Set(deleted.filter(id => typeof id === 'string' && id.trim()));
+      const deletedSet = new Set(deleted.filter((id: unknown) => typeof id === 'string' && id.trim()));
       const current = await loadScene(link.board_id);
       const byId = new Map(
         current.elements.filter(element => !deletedSet.has(element.id)).map(element => [element.id, element])

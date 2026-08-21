@@ -1,89 +1,70 @@
-FROM node:22-alpine AS base
+FROM node:22-bookworm-slim AS base
 
-# Install pnpm
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 ENV npm_config_fetch_timeout=600000
 ENV npm_config_fetch_retries=8
-RUN corepack enable
+RUN corepack enable && corepack prepare pnpm@10.29.3 --activate
 
-# Setup common build stage
 FROM base AS builder
 WORKDIR /app
 
-# Install build dependencies for sqlite3
-RUN apk add --no-cache python3 make g++ 
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 make g++ \
+  && rm -rf /var/lib/apt/lists/*
 
-# Copy root workspace files
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
-
-# Copy both packages
 COPY packages/server ./packages/server/
 COPY packages/client ./packages/client/
 
-# Install dependencies
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
-
-# Build both applications
 RUN pnpm --filter "@excalidraw-persist/server" build
-RUN pnpm --filter "@excalidraw-persist/client" build
+RUN pnpm --filter "@excalidraw-persist/client" exec vite build
 
-# Setup server production stage
 FROM base AS server
 WORKDIR /app
 
-# Install build dependencies for sqlite3
-RUN apk add --no-cache python3 make g++
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 make g++ \
+  && rm -rf /var/lib/apt/lists/*
 
-# Copy package.json files
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/pnpm-lock.yaml ./
 COPY --from=builder /app/pnpm-workspace.yaml ./
 COPY --from=builder /app/packages/server/package.json ./packages/server/
 
-# Install production dependencies only and rebuild sqlite3
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile --prod
 
-# Copy built JavaScript files
 COPY --from=builder /app/packages/server/dist ./packages/server/dist
 
-# Create src directory structure and copy schema file
 RUN mkdir -p /app/src/lib
 COPY --from=builder /app/packages/server/src/lib/schema.sql ./src/lib/
-
-# Create directory for SQLite database
 RUN mkdir -p /app/data
 
-# Setup client files
-FROM nginx:alpine AS client
+FROM nginx:1.27-bookworm AS client
 COPY --from=builder /app/packages/client/dist /usr/share/nginx/html
-COPY packages/client/nginx.conf /etc/nginx/http.d/default.conf
+COPY packages/client/nginx.conf /etc/nginx/conf.d/default.conf
 
-# Final combined image
-FROM alpine:latest
+FROM node:22-bookworm-slim AS runtime
 
-# Install Node.js and Nginx
-RUN apk add --no-cache nodejs nginx supervisor
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends nginx supervisor curl ca-certificates \
+  && rm -rf /var/lib/apt/lists/* \
+  && mkdir -p /app/data /var/log/supervisor /run/nginx
 
-# Set up directories
-RUN mkdir -p /app /app/data /var/log/supervisor
-
-# Copy supervisor configuration
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-
-# Copy server files
 COPY --from=server /app /app
-# Copy client files
 COPY --from=client /usr/share/nginx/html /usr/share/nginx/html
-COPY --from=client /etc/nginx/http.d/default.conf /etc/nginx/http.d/default.conf
+COPY --from=client /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf
 
-# Set environment variables
 ENV PORT=4000
+ENV HOST=0.0.0.0
 ENV NODE_ENV=production
 ENV DB_PATH=/app/data/database.sqlite
 
-# Expose ports
 EXPOSE 80 4000
 
-# Start supervisord to manage both services
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"] 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD curl -fsS "http://127.0.0.1:4000/api/health" || exit 1
+
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
